@@ -5,7 +5,8 @@ import datetime
 import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters
-import ta  # Technical Analysis library
+import ta # Technical Analysis library
+import pytz # Import the pytz library for timezone handling
 
 # Logging setup
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -137,6 +138,12 @@ async def fetch_and_analyze():
     else:
         signal = "⚪️ *WAIT* — No clear trend"
 
+    # Get current time and convert to IST
+    ist_timezone = pytz.timezone('Asia/Kolkata')
+    now_ist = datetime.datetime.now(ist_timezone)
+    # Format to exclude the UTC offset, but keep the IST abbreviation
+    formatted_timestamp = now_ist.strftime('%Y-%m-%d %H:%M:%S %Z') 
+
     return {
         'price': last['close'],
         'rsi': last['rsi'],
@@ -152,7 +159,7 @@ async def fetch_and_analyze():
         'signal': signal,
         'reasons': reasons,
         'score': score,
-        'timestamp': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        'timestamp': formatted_timestamp
     }
 
 async def handle_trade_prediction_callback(update: Update, context: object) -> None:
