@@ -73,40 +73,69 @@ async def fetch_and_analyze():
     df['bb_low'] = bollinger.bollinger_lband()
     df['bb_mid'] = bollinger.bollinger_mavg()
 
-    # Volume surge: compare last volume to 2-period avg volume, surge if > 1.5x
+    # Volume surge: compare last volume to 2-period avg volume, surge if > 1.3x (less strict)
     df['vol_avg2'] = df['volume'].rolling(window=2).mean()
     last = df.iloc[-1]
 
     # Candlestick pattern detection
     candle_pattern = detect_candlestick_pattern(df)
 
-    # Decision Logic
-    buy_conditions = [
-        last['rsi'] < 30,
-        last['ema20'] > last['ema50'],
-        last['macd'] > last['macd_signal'],
-        last['close'] > last['bb_mid'],
-        last['volume'] > 1.5 * last['vol_avg2'],
-        candle_pattern == 'bullish_engulfing'
-    ]
-    sell_conditions = [
-        last['rsi'] > 70,
-        last['ema20'] < last['ema50'],
-        last['macd'] < last['macd_signal'],
-        last['close'] < last['bb_mid'],
-        last['volume'] > 1.5 * last['vol_avg2'],
-        candle_pattern == 'bearish_engulfing'
-    ]
+    # Scoring System (weighted)
+    score = 0
+    reasons = []
 
-    buy_score = sum(buy_conditions)
-    sell_score = sum(sell_conditions)
+    # RSI weight 2
+    if last['rsi'] < 35:
+        score += 2
+        reasons.append("🔻 RSI < 35 (Oversold)")
+    elif last['rsi'] > 65:
+        score -= 2
+        reasons.append("🔺 RSI > 65 (Overbought)")
 
-    if buy_score >= 4:
-        signal = "🟢 *BUY* — Strong multi-indicator confirmation"
-    elif sell_score >= 4:
-        signal = "🔴 *SELL* — Strong multi-indicator confirmation"
+    # EMA weight 1
+    if last['ema20'] > last['ema50']:
+        score += 1
+        reasons.append("🟢 EMA20 > EMA50 (Uptrend)")
+    elif last['ema20'] < last['ema50']:
+        score -= 1
+        reasons.append("🔴 EMA20 < EMA50 (Downtrend)")
+
+    # MACD weight 1
+    if last['macd'] > last['macd_signal']:
+        score += 1
+        reasons.append("📈 MACD Bullish")
+    elif last['macd'] < last['macd_signal']:
+        score -= 1
+        reasons.append("📉 MACD Bearish")
+
+    # Bollinger Mid weight 0.5
+    if last['close'] > last['bb_mid']:
+        score += 0.5
+        reasons.append("🟢 Above BB Mid")
     else:
-        signal = "⚪️ *WAIT* — No strong signal currently"
+        score -= 0.5
+        reasons.append("🔴 Below BB Mid")
+
+    # Volume surge weight 0.5 (threshold relaxed)
+    if last['volume'] > 1.3 * last['vol_avg2']:
+        score += 0.5
+        reasons.append("💥 Volume Surge")
+
+    # Candle pattern weight 1
+    if candle_pattern == 'bullish_engulfing':
+        score += 1
+        reasons.append("🕯️ Bullish Engulfing")
+    elif candle_pattern == 'bearish_engulfing':
+        score -= 1
+        reasons.append("🕯️ Bearish Engulfing")
+
+    # Final signal decision
+    if score >= 2.5:
+        signal = "🟢 *BUY* — Momentum building"
+    elif score <= -2.5:
+        signal = "🔴 *SELL* — Possible downside"
+    else:
+        signal = "⚪️ *WAIT* — No clear trend"
 
     return {
         'price': last['close'],
@@ -121,6 +150,8 @@ async def fetch_and_analyze():
         'vol_avg2': last['vol_avg2'],
         'candle_pattern': candle_pattern,
         'signal': signal,
+        'reasons': reasons,
+        'score': score,
         'timestamp': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     }
 
@@ -131,7 +162,6 @@ async def handle_trade_prediction_callback(update: Update, context: object) -> N
     try:
         await query.edit_message_text("🔄 *Refreshing data...* Please wait.", parse_mode='Markdown')
 
-        # Removed sleep to speed up response
         analysis = await fetch_and_analyze()
 
         text = (
@@ -145,7 +175,9 @@ async def handle_trade_prediction_callback(update: Update, context: object) -> N
             f"🎢 Bollinger Bands: High `{analysis['bb_high']:.2f}`, Low `{analysis['bb_low']:.2f}`\n"
             f"📊 Volume: `{analysis['volume']:.4f}` (Avg2 `{analysis['vol_avg2']:.4f}`)\n"
             f"🕯️ Candle Pattern: `{analysis['candle_pattern'] or 'None'}`\n\n"
+            f"🧠 Signal Score: `{analysis['score']:.2f}`\n"
             f"{analysis['signal']}\n\n"
+            f"🔍 *Reasons:*\n" + "\n".join(analysis['reasons']) + "\n\n"
             f"⏰ _Updated at {analysis['timestamp']}_"
         )
 
